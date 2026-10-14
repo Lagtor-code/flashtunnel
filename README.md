@@ -1,140 +1,90 @@
-# ⚡ FlashTunnel - High-Performance Zig TCP Stealth Tunnel
+# FlashTunnel
 
-یک تانل فوق‌سریع، سبک و نامرئی بر پایه زبان **Zig**، طراحی‌شده اختصاصی برای تانل بین سرور ایران و خارج جهت عبور پروتکل‌های **Xray (VLESS Reality / Trojan / Shadowsocks)** از سخت‌ترین فیلترینگ‌های DPI مخابرات و همراه اول/ایرانسل.
+High-performance, lightweight TCP stealth tunnel designed for secure, low-latency relay connections.
 
----
+## Features
 
-## 🌟 ویژگی‌های کلیدی (Key Features)
+- Native Zig Core: Minimal memory footprint (<0.5MB baseline) with zero garbage collection overhead.
+- TLS 1.3 Record Carrier: Streams are encapsulated within standard TLS records for protocol masking.
+- Integrated Anti-DPI Segmentation: Out-of-order TCP segmentation with sequence overlap and urgent flag signaling directly at the transport layer.
+- ChaCha20-Poly1305 AEAD: Authenticated end-to-end encryption with vectorized processing.
+- Multi-Port Redirection: Native iptables support for mapping alternative ports (e.g., 8443, 2087, 8080) to the primary entry port.
+- Built-in Interactive Management: Terminal dashboard for configuration, service control, and live monitoring.
 
-* **موتور محلی زاپرت (Zapret Desync Inside):**
-  اجرای استراتژی قدرتمند `multidisorder:pos=2:seqovl=1:urg` بدون نیاز به نصب هیچ‌گونه پکیج اضافی زاپرت یا سربار NFQUEUE در کرنل.
-* **استتار به عنوان TLS 1.3 (Chameleon Protocol):**
-  هندشیک و تمام سشن‌های تانل در قالب رکوردهای استاندارد TLS 1.3 (`0x16 0x03 0x01`) بسته‌بندی می‌شوند تا DPI آن را ترافیک امن وب تشخیص دهد.
-* **فوق‌العاده کم‌مصرف (Ultra-Lightweight):**
-  * مصرف رم: **کمتر از ۰.۵ مگابایت** (در حالت بیکار) و تنها **۱۷ مگابایت** در اوج ۴۰۰ اتصال هم‌زمان!
-  * مصرف سی‌پی‌یو: زیر ۵٪.
-  * باینری کامپایل‌شده استاتیک بدون نیاز به پایتون، نود، داکر یا ابزارهای دیگر (حجم کل: ۲.۲ مگابایت).
-* **رمزنگاری پرسرعت ChaCha20-Poly1305:**
-  رمزنگاری داده‌ها با شتاب‌دهنده‌های سخت‌افزاری پردازنده (SIMD).
-* **منوی تعاملی و زیبا (BackPack TUI):**
-  نصب تک‌دستور، داشبورد وضعیت، مدیریت پورت‌ها، ریستارت، لاگ زنده و پاک‌سازی کامل.
-* **فوروارد چند پورت (Multi-Port Forwarding):**
-  پشتیبانی هم‌زمان از پورت‌های جایگزین (۴۴۳، ۸۴۴۳، ۲۰۸۷، ۸۰۸۰) از طریق iptables جهت دور زدن مسدودسازی‌های پورت ۴۴۳ توسط اپراتورها.
+## Installation
 
----
-
-## 🚀 نصب سریع با یک دستور (One-Command Install)
-
-کافیست در ترمینال سرور دستور زیر را اجرا کنید:
+Run the one-command installer on your Linux server (x86_64):
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/Lagtor-code/flashtunnel/main/install.sh)
 ```
-یا در صورت کلون دستی مخزن:
+
+Or clone the repository manually:
+
 ```bash
 git clone https://github.com/Lagtor-code/flashtunnel.git /opt/flashtunnel && bash /opt/flashtunnel/install.sh
 ```
 
-پس از نصب، در هر زمان فقط با تایپ کلمه زیر در ترمینال، منوی مدیریت تانل باز می‌شود:
+After installation, access the management menu anytime by running:
+
 ```bash
 flashtunnel
 ```
 
----
+## Quick Start
 
-## 📋 راهنمای گام‌به‌گام راه‌اندازی (Step-by-Step Setup)
+### 1. Server Setup (Upstream / Destination)
+1. Run `flashtunnel` on your remote destination server.
+2. Select option `1` (Configure Server).
+3. Set the tunnel listen port (default: `4433`), local target service port (default: `443`), and a security key.
+4. The service will start automatically via systemd.
 
-### گام اول: سرور خارج (Kharej - Server)
-1. وارد سرور خارج شوید و `flashtunnel` را اجرا کنید.
-2. گزینه **`1` (راه‌اندازی سرور خارج)** را انتخاب کنید.
-3. مشخصات را وارد کنید:
-   * **پورت تانل:** `4433` (پورتی که تانل به آن گوش می‌دهد)
-   * **پورت مقصد Xray:** `443` (همان پورتی که پنل ثنایی یا Xray روی آن ران است)
-   * **رمز عبور:** یک کلید امنیتی (به عنوان مثال: `MySecretZigTunnel99`)
-4. سرویس فوراً استارت شده و آی‌پی و مشخصات اتصال را نمایش می‌دهد.
+### 2. Client Setup (Relay / Local Entry)
+1. Run `flashtunnel` on your local relay server.
+2. Select option `2` (Configure Client).
+3. Enter the remote server IP, tunnel port, incoming listen port (default: `443`), optional redirect ports, and the matching security key.
+4. The relay service will start immediately.
 
----
+### 3. Client Configuration
+Point your proxy client (e.g., VLESS / Trojan / Shadowsocks) to the relay server's IP address and chosen port.
 
-### گام دوم: سرور ایران (Iran - Client / Relay)
-1. وارد سرور ایران شوید و `flashtunnel` را اجرا کنید.
-2. گزینه **`2` (راه‌اندازی سرور ایران)** را انتخاب کنید.
-3. مشخصات را وارد کنید:
-   * **آی‌پی سرور خارج:** (آی‌پی سرور خارج شما)
-   * **پورت تانل سرور خارج:** `4433`
-   * **پورت اصلی ورودی کاربران:** `443`
-   * **پورت‌های اضافه جایگزین:** `8443,2087,8080` (اینتر بزنید تا اعمال شوند)
-   * **رمز عبور:** دقیقاً همان رمزی که روی سرور خارج تعیین کردید.
-4. تمام! تانل وصل شده و آماده اتصال کلاینت‌ها است.
+## Command-Line Usage
 
----
+```bash
+# Run server directly
+flashtunnel server --listen 0.0.0.0:4433 --target 127.0.0.1:443 --tcp --key <SECRET_KEY>
 
-### گام سوم: تنظیم در نرم‌افزارهای کلاینت (v2rayNG, Nekoray, Streisand)
-در تنظیمات کانفیگ VLESS Reality خود:
-* بخش **Address (آدرس سرور)** را برابر با **آی‌پی سرور ایران** بگذارید.
-* بخش **Port (پورت)** را برابر با **۴۴۳** (یا در صورت مسدودی **۸۴۴۳**) بگذارید.
-* بقیه تنظیمات Reality (SNI, PublicKey, ShortId, Flow) بدون تغییر باقی می‌مانند.
+# Run client directly
+flashtunnel client --server <REMOTE_IP>:4433 --listen 0.0.0.0:443 --tcp --key <SECRET_KEY>
 
----
+# Run cryptographic and transport self-tests
+flashtunnel test
+```
 
-## 📊 نتایج تست فشار و عملکرد (Stress Test & Capacity)
-
-تست فشار واقعی از داخل شبکه ایران روی این تانل انجام شده است:
-
-| تعداد اتصال هم‌زمان | نرخ موفقیت | توان پردازش (اتصال/ثانیه) | میانگین پینگ و تأخیر | وضعیت |
-| :---: | :---: | :---: | :---: | :---: |
-| **۲۵** | **۱۰۰%** | 44.4 conns/s | ۴۷۱ میلی‌ثانیه |  پایدار |
-| **۵۰** | **۱۰۰%** | 53.8 conns/s | ۶۲۹ میلی‌ثانیه |  پایدار |
-| **۱۰۰** | **۱۰۰%** | 74.0 conns/s | ۸۴۶ میلی‌ثانیه |  پایدار |
-| **۲۰۰** | **۱۰۰%** | 61.9 conns/s | ۱,۶۱۹ میلی‌ثانیه |  پایدار |
-| **۴۰۰** | **۱۰۰%** | 70.6 conns/s | ۲,۸۶۲ میلی‌ثانیه |  پایدار |
-
-* **سرعت دانلود چند جریانی (Multi-Stream Throughput):** ~۸۰ مگابیت بر ثانیه (۱۰ مگابایت بر ثانیه).
-* **ظرفیت تخمینی کاربران:**
-  * در پورت ۱۰۰ مگابیت: **۴۰ تا ۶۰ کاربر آنلاین هم‌زمان** (~۳۰۰ کاربر ثبت‌نامی).
-  * در پورت ۱ گیگابیت: **۳۰۰ تا ۵۰۰ کاربر آنلاین هم‌زمان** (~۲۰۰۰ کاربر ثبت‌نامی).
-
----
-
-## 🛠️ ساختار فایل‌های پروژه (File Structure)
+## Repository Structure
 
 ```text
 flashtunnel/
 ├── bin/
-│   └── flashtunnel             # باینری استاتیک لینوکس کامپایل‌شده با Zig ReleaseFast
-├── src/                        # سورس‌کدهای کامل زبان Zig
-│   ├── main.zig                # نقطه ورود CLI و فرامین سرور/کلاینت
+│   └── flashtunnel             # Precompiled static Linux x86_64 binary
+├── src/                        # Complete Zig source code
+│   ├── main.zig                # CLI entrypoint
 │   ├── tcp/
-│   │   ├── tunnel_server.zig   # لیسنر و دیکودر سرور خارج
-│   │   ├── tunnel_client.zig   # لیسنر و Desync اینجکتور سرور ایران
-│   │   └── tunnel_protocol.zig # فریم‌ورک پکت‌های TLS 1.3 Chameleon و کریپتو
+│   │   ├── tunnel_server.zig   # Server listener and decryptor
+│   │   ├── tunnel_client.zig   # Client relay and desync injector
+│   │   └── tunnel_protocol.zig # Protocol frame framing and AEAD
 │   ├── protocol/
-│   │   └── desync.zig          # موتور ضد فیلتر multidisorder + urg
+│   │   └── desync.zig          # Packet desynchronization engine
 │   └── crypto/
-│       └── chacha20poly1305.zig# شتاب‌دهنده رمزنگاری بدون آلیکیشن
-├── build.zig                   # فایل پیکربندی Zig Build
-├── flashtunnel.sh              # اسکریپت منوی تعاملی TUI
-├── install.sh                  # اسکریپت نصب خودکار یک‌خطی
-├── flashtunnel-server.service  # تمپلیت سرویس لینوکس برای سرور خارج
-├── flashtunnel-client.service  # تمپلیت سرویس لینوکس برای سرور ایران
-└── README.md                   # راهنمای کامل فارسی
+│       └── chacha20poly1305.zig# ChaCha20-Poly1305 implementation
+├── build.zig                   # Zig build configuration
+├── flashtunnel.sh              # Management TUI script
+├── install.sh                  # One-command installer
+├── flashtunnel-server.service  # Systemd unit template for server
+├── flashtunnel-client.service  # Systemd unit template for client
+└── README.md                   # Documentation
 ```
 
----
+## License
 
-## 🔧 دستورات خط فرمان مستقیم (CLI Usage)
-
-```bash
-# اجرای دستی سرور خارج
-./bin/flashtunnel server --listen 0.0.0.0:4433 --target 127.0.0.1:443 --tcp --key MySecretKey
-
-# اجرای دستی سرور ایران
-./bin/flashtunnel client --server 1.2.3.4:4433 --listen 0.0.0.0:443 --tcp --key MySecretKey
-
-# تست سرعت و یکپارچگی کریپتو
-./bin/flashtunnel test
-```
-
----
-
-## 🤝 مجوز (License)
-توسعه یافته به صورت آزاد و متن‌باز جهت استفاده نامحدود.
+Open-source under the MIT License.

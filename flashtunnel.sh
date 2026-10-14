@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#   ⚡ FLASHTUNNEL - HIGH-PERFORMANCE ZIG TCP STEALTH TUNNEL ⚡
-#   Core: Native Zig Engine | RAM: <0.5MB | Transport: Pure TCP + TLS 1.3
-#   Anti-DPI: multidisorder:pos=2:seqovl=1:urg=true | Crypto: ChaCha20-Poly1305
+#   FlashTunnel - High-Performance TCP Stealth Tunnel
+#   Core: Native Zig Engine | Architecture: Pure TCP + TLS 1.3
 # ==============================================================================
 
 set -e
@@ -20,12 +19,12 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Check root privilege
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}[!] لطفا این اسکریپت را با دسترسی root اجرا کنید.${NC}"
+        echo -e "${RED}[!] Please run this script with root privileges.${NC}"
         exit 1
     fi
 }
@@ -44,7 +43,7 @@ check_binary() {
         elif [ -f "/usr/local/bin/flashtunnel" ] && file /usr/local/bin/flashtunnel | grep -q "ELF"; then
             cp /usr/local/bin/flashtunnel "$BINARY_PATH"
         else
-            echo -e "${RED}[!] باینری flashtunnel یافت نشد.${NC}"
+            echo -e "${RED}[!] FlashTunnel binary not found.${NC}"
             exit 1
         fi
     fi
@@ -61,12 +60,10 @@ check_binary() {
 show_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
-    echo "  ╔════════════════════════════════════════════════════════════════╗"
-    echo "  ║         ⚡ FLASHTUNNEL - ZIG TCP STEALTH TUNNEL ⚡             ║"
-    echo "  ║       Engine: Native Zig | Memory: <0.5MB | 0-Copy I/O         ║"
-    echo "  ║       Anti-DPI: multidisorder:pos=2:seqovl=1:urg               ║"
-    echo "  ║       Crypto: ChaCha20-Poly1305 + TLS 1.3 Record Masking       ║"
-    echo "  ╚════════════════════════════════════════════════════════════════╝"
+    echo "  +------------------------------------------------------------+"
+    echo "  |                FlashTunnel Manager                         |"
+    echo "  |        High-Performance TCP Stealth Tunnel for Linux       |"
+    echo "  +------------------------------------------------------------+"
     echo -e "${NC}"
 }
 
@@ -75,30 +72,30 @@ show_status() {
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
         local status_text
-        if systemctl is-active --quiet flashtunnel; then
-            status_text="${GREEN}● فعال و در حال اجرا (Active)${NC}"
+        if systemctl is-active --quiet flashtunnel 2>/dev/null || systemctl is-active --quiet mytunnel 2>/dev/null; then
+            status_text="${GREEN}Active (Running)${NC}"
         else
-            status_text="${RED}○ متوقف شده (Inactive)${NC}"
+            status_text="${RED}Inactive (Stopped)${NC}"
         fi
 
-        echo -e "${BOLD}┌── [ وضعیت تانل ]${NC}"
-        echo -e "│  وضعیت سرویس   : ${status_text}"
-        echo -e "│  نقش سرور     : ${YELLOW}${ROLE^^}${NC}"
+        echo -e "${BOLD}[ Tunnel Status ]${NC}"
+        echo -e "  Service Status : ${status_text}"
+        echo -e "  Node Role      : ${YELLOW}${ROLE^^}${NC}"
         if [ "$ROLE" == "server" ]; then
-            echo -e "│  پورت تانل     : ${CYAN}${TUNNEL_PORT}${NC}"
-            echo -e "│  پورت مقصد Xray: ${GREEN}${XRAY_PORT}${NC}"
+            echo -e "  Tunnel Port    : ${CYAN}${TUNNEL_PORT}${NC}"
+            echo -e "  Target Port    : ${GREEN}${XRAY_PORT}${NC}"
         else
-            echo -e "│  سرور خارج    : ${CYAN}${SERVER_IP}:${TUNNEL_PORT}${NC}"
-            echo -e "│  پورت لیسن ورودی: ${GREEN}${XRAY_PORT}${NC}"
+            echo -e "  Remote Server  : ${CYAN}${SERVER_IP}:${TUNNEL_PORT}${NC}"
+            echo -e "  Listen Port    : ${GREEN}${XRAY_PORT}${NC}"
             if [ -n "$EXTRA_PORTS" ]; then
-                echo -e "│  پورت‌های اضافه : ${YELLOW}${EXTRA_PORTS}${NC}"
+                echo -e "  Redirect Ports : ${YELLOW}${EXTRA_PORTS}${NC}"
             fi
         fi
-        echo -e "│  کلید امنیتی   : ${PURPLE}${KEY}${NC}"
-        echo -e "│  تکنیک ضد فیلتر: ${BOLD}multidisorder:pos=2:seqovl=1:urg${NC}"
-        echo -e "${BOLD}└───────────────────────────────────────────────────────────────${NC}"
+        echo -e "  Security Key   : ${PURPLE}${KEY}${NC}"
+        echo -e "  Desync Mode    : ${BOLD}multidisorder (Active)${NC}"
+        echo -e "----------------------------------------------------------------"
     else
-        echo -e "${YELLOW}[!] هنوز هیچ تانلی روی این سرور پیکربندی نشده است.${NC}"
+        echo -e "${YELLOW}[!] FlashTunnel is not configured on this server yet.${NC}"
     fi
     echo ""
 }
@@ -106,16 +103,16 @@ show_status() {
 # Install / Setup Server (Kharej)
 setup_server() {
     show_banner
-    echo -e "${GREEN}${BOLD}=== راه‌اندازی سرور خارج (Server - Kharej) ===${NC}\n"
+    echo -e "${GREEN}${BOLD}=== Configure Server (Foreign / Upstream) ===${NC}\n"
 
-    read -p "پورت تانل برای دریافت ارتباط از ایران [پیش‌فرض 4433]: " TUNNEL_PORT
+    read -p "Tunnel listen port for incoming relay connections [default: 4433]: " TUNNEL_PORT
     TUNNEL_PORT=${TUNNEL_PORT:-4433}
 
-    read -p "پورت مقصد محلی Xray روی سرور خارج [پیش‌فرض 443]: " XRAY_PORT
+    read -p "Target service port on localhost [default: 443]: " XRAY_PORT
     XRAY_PORT=${XRAY_PORT:-443}
 
     DEFAULT_KEY=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16 ; echo '')
-    read -p "رمز عبور تانل [پیش‌فرض $DEFAULT_KEY]: " KEY
+    read -p "Tunnel security key [default: $DEFAULT_KEY]: " KEY
     KEY=${KEY:-$DEFAULT_KEY}
 
     mkdir -p "$CONFIG_DIR"
@@ -129,7 +126,7 @@ EOF
     # Create Systemd Service
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=FlashTunnel Server (Xray Reality)
+Description=FlashTunnel Server
 After=network.target
 
 [Service]
@@ -147,38 +144,38 @@ EOF
     systemctl daemon-reload
     systemctl enable --now flashtunnel
 
-    echo -e "\n${GREEN}[✓] سرور خارج با موفقیت راه‌اندازی شد!${NC}"
+    echo -e "\n${GREEN}[+] Server configured and started successfully!${NC}"
     local EXT_IP=$(curl -s4 ifconfig.me || hostname -I | awk '{print $1}')
-    echo -e "${CYAN}مشخصات جهت اتصال از سرور ایران:${NC}"
-    echo -e "  آی‌پی سرور خارج: ${BOLD}${EXT_IP}${NC}"
-    echo -e "  پورت تانل     : ${BOLD}${TUNNEL_PORT}${NC}"
-    echo -e "  کلید امنیتی   : ${BOLD}${KEY}${NC}"
+    echo -e "${CYAN}Connection parameters for Relay / Client:${NC}"
+    echo -e "  Server IP    : ${BOLD}${EXT_IP}${NC}"
+    echo -e "  Tunnel Port  : ${BOLD}${TUNNEL_PORT}${NC}"
+    echo -e "  Security Key : ${BOLD}${KEY}${NC}"
     echo ""
-    read -p "جهت بازگشت اینتر را بزنید..." dummy
+    read -p "Press Enter to return to menu..." dummy
 }
 
 # Install / Setup Client (Iran Relay)
 setup_client() {
     show_banner
-    echo -e "${GREEN}${BOLD}=== راه‌اندازی سرور ایران (Client / Relay - Iran) ===${NC}\n"
+    echo -e "${GREEN}${BOLD}=== Configure Client (Relay / Local) ===${NC}\n"
 
-    read -p "آدرس IP سرور خارج: " SERVER_IP
+    read -p "Remote Server IP address: " SERVER_IP
     while [ -z "$SERVER_IP" ]; do
-        read -p "آی‌پی سرور خارج الزامی است: " SERVER_IP
+        read -p "Remote Server IP is required: " SERVER_IP
     done
 
-    read -p "پورت تانل سرور خارج [پیش‌فرض 4433]: " TUNNEL_PORT
+    read -p "Tunnel port on remote server [default: 4433]: " TUNNEL_PORT
     TUNNEL_PORT=${TUNNEL_PORT:-4433}
 
-    read -p "پورت اصلی ورودی برای کاربران [پیش‌فرض 443]: " XRAY_PORT
+    read -p "Local incoming listen port [default: 443]: " XRAY_PORT
     XRAY_PORT=${XRAY_PORT:-443}
 
-    read -p "پورت‌های اضافه فوروارد به پورت اصلی (مثال: 8443,2087,8080) [پیش‌فرض 8443,2087,8080]: " EXTRA_PORTS
+    read -p "Additional redirected ports (comma-separated) [default: 8443,2087,8080]: " EXTRA_PORTS
     EXTRA_PORTS=${EXTRA_PORTS:-"8443,2087,8080"}
 
-    read -p "رمز عبور تانل (دقیقاً برابر با کلید سرور خارج): " KEY
+    read -p "Tunnel security key (must match server): " KEY
     while [ -z "$KEY" ]; do
-        read -p "رمز عبور الزامی است: " KEY
+        read -p "Security key is required: " KEY
     done
 
     mkdir -p "$CONFIG_DIR"
@@ -202,7 +199,7 @@ EOF
     # Create Systemd Service
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=FlashTunnel Client (Xray Reality Relay)
+Description=FlashTunnel Client
 After=network.target
 
 [Service]
@@ -221,55 +218,57 @@ EOF
     systemctl daemon-reload
     systemctl enable --now flashtunnel
 
-    echo -e "\n${GREEN}[✓] رله سرور ایران با موفقیت راه‌اندازی شد!${NC}"
+    echo -e "\n${GREEN}[+] Client relay configured and started successfully!${NC}"
     local EXT_IP=$(curl -s4 ifconfig.me || hostname -I | awk '{print $1}')
-    echo -e "${CYAN}مشخصات برای تنظیم در کلاینت (v2rayNG / Nekoray):${NC}"
-    echo -e "  آدرس (Address): ${BOLD}${EXT_IP}${NC}"
-    echo -e "  پورت اصلی    : ${BOLD}${XRAY_PORT}${NC}"
+    echo -e "${CYAN}Client connection details:${NC}"
+    echo -e "  Relay Address  : ${BOLD}${EXT_IP}${NC}"
+    echo -e "  Main Port      : ${BOLD}${XRAY_PORT}${NC}"
     if [ -n "$EXTRA_PORTS" ]; then
-        echo -e "  پورت‌های جایگزین: ${BOLD}${EXTRA_PORTS}${NC}"
+        echo -e "  Fallback Ports : ${BOLD}${EXTRA_PORTS}${NC}"
     fi
     echo ""
-    read -p "جهت بازگشت اینتر را بزنید..." dummy
+    read -p "Press Enter to return to menu..." dummy
 }
 
 # View Live Logs
 view_logs() {
-    echo -e "${CYAN}در حال نمایش لاگ‌های زنده تانل (برای خروج Ctrl+C بزنید)...${NC}\n"
-    journalctl -u flashtunnel -f --no-pager
+    echo -e "${CYAN}Streaming live logs (Press Ctrl+C to exit)...${NC}\n"
+    journalctl -u flashtunnel -u mytunnel -f --no-pager
 }
 
 # Restart Service
 restart_tunnel() {
-    echo -e "${YELLOW}[*] در حال ریستارت سرویس...${NC}"
-    systemctl restart flashtunnel
-    echo -e "${GREEN}[✓] سرویس با موفقیت ریستارت شد.${NC}"
+    echo -e "${YELLOW}[*] Restarting service...${NC}"
+    systemctl restart flashtunnel 2>/dev/null || systemctl restart mytunnel 2>/dev/null || true
+    echo -e "${GREEN}[+] Service restarted successfully.${NC}"
     sleep 1
 }
 
 # Stop Service
 stop_tunnel() {
-    echo -e "${YELLOW}[*] در حال متوقف کردن سرویس...${NC}"
-    systemctl stop flashtunnel
-    echo -e "${GREEN}[✓] سرویس متوقف شد.${NC}"
+    echo -e "${YELLOW}[*] Stopping service...${NC}"
+    systemctl stop flashtunnel 2>/dev/null || systemctl stop mytunnel 2>/dev/null || true
+    echo -e "${GREEN}[+] Service stopped.${NC}"
     sleep 1
 }
 
 # Uninstall
 uninstall_tunnel() {
-    read -p "آیا از حذف کامل FlashTunnel اطمینان دارید؟ (y/n): " confirm
+    read -p "Are you sure you want to completely remove FlashTunnel? (y/n): " confirm
     if [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
         systemctl stop flashtunnel 2>/dev/null || true
         systemctl disable flashtunnel 2>/dev/null || true
+        systemctl stop mytunnel 2>/dev/null || true
+        systemctl disable mytunnel 2>/dev/null || true
         rm -f "$SERVICE_FILE"
         systemctl daemon-reload
         rm -rf "$CONFIG_DIR"
         rm -f "$BINARY_PATH"
         rm -f /usr/local/bin/flashtunnel-menu
         rm -f /usr/local/bin/flashtunnel
-        echo -e "${GREEN}[✓] FlashTunnel و تمام فایل‌های وابسته با موفقیت حذف شدند.${NC}"
+        echo -e "${GREEN}[+] FlashTunnel has been completely removed.${NC}"
     else
-        echo -e "${YELLOW}[*] عملیات لغو شد.${NC}"
+        echo -e "${YELLOW}[*] Action cancelled.${NC}"
     fi
     sleep 1
 }
@@ -283,16 +282,16 @@ main_menu() {
         show_banner
         show_status
 
-        echo -e "${BOLD}انتخاب عملیات:${NC}"
-        echo -e "  ${GREEN}1)${NC} 🚀 راه‌اندازی سرور خارج (Server - Kharej)"
-        echo -e "  ${GREEN}2)${NC} 🇮🇷 راه‌اندازی سرور ایران (Client / Relay - Iran)"
-        echo -e "  ${CYAN}3)${NC} 📊 مشاهده لاگ زنده ترافیک (Live Logs)"
-        echo -e "  ${YELLOW}4)${NC} 🔄 ریستارت تانل (Restart)"
-        echo -e "  ${YELLOW}5)${NC} 🛑 توقف تانل (Stop)"
-        echo -e "  ${RED}6)${NC} 🗑️  حذف کامل و پاک‌سازی (Uninstall)"
-        echo -e "  ${BOLD}0)${NC} ❌ خروج"
+        echo -e "${BOLD}Select an option:${NC}"
+        echo -e "  ${GREEN}1)${NC} Configure Server (Foreign / Upstream)"
+        echo -e "  ${GREEN}2)${NC} Configure Client (Relay / Local)"
+        echo -e "  ${CYAN}3)${NC} View Live Logs"
+        echo -e "  ${YELLOW}4)${NC} Restart Service"
+        echo -e "  ${YELLOW}5)${NC} Stop Service"
+        echo -e "  ${RED}6)${NC} Uninstall"
+        echo -e "  ${BOLD}0)${NC} Exit"
         echo ""
-        read -p "شماره مورد نظر را وارد کنید: " choice
+        read -p "Enter selection [0-6]: " choice
 
         case "$choice" in
             1) setup_server ;;
@@ -302,7 +301,7 @@ main_menu() {
             5) stop_tunnel ;;
             6) uninstall_tunnel ;;
             0) exit 0 ;;
-            *) echo -e "${RED}[!] گزینه نامعتبر است.${NC}"; sleep 1 ;;
+            *) echo -e "${RED}[!] Invalid selection.${NC}"; sleep 1 ;;
         esac
     done
 }
