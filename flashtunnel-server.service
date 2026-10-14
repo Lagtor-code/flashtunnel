@@ -1,0 +1,14 @@
+[Unit]
+Description=FlashTunnel Server (Xray Reality)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/flashtunnel-bin server --listen 0.0.0.0:4433 --target 127.0.0.1:443 --tcp --key MySecretKey
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
