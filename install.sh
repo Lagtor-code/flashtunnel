@@ -62,19 +62,26 @@ echo -e "${YELLOW}[*] Fetching latest FlashTunnel release...${NC}"
 # 1. Try local files first
 if [ -f "${SCRIPT_DIR}/bin/flashtunnel" ] && [ -f "${SCRIPT_DIR}/flashtunnel.sh" ]; then
     echo -e "${GREEN}[*] Installing from local files...${NC}"
-    cp "${SCRIPT_DIR}/bin/flashtunnel" "$BIN_DEST"
-    cp "${SCRIPT_DIR}/flashtunnel.sh" "$MENU_DEST"
+    cp --remove-destination "${SCRIPT_DIR}/bin/flashtunnel" "$BIN_DEST" 2>/dev/null || cp "${SCRIPT_DIR}/bin/flashtunnel" "$BIN_DEST"
+    cp --remove-destination "${SCRIPT_DIR}/flashtunnel.sh" "$MENU_DEST" 2>/dev/null || cp "${SCRIPT_DIR}/flashtunnel.sh" "$MENU_DEST"
     cp -r "${SCRIPT_DIR}"/* "$INSTALL_DIR/" 2>/dev/null || true
 else
-    # 2. Direct fast curl download (bypasses git TLS handshake restrictions in Iran)
+    # 2. Direct fast curl download to temp files (avoids ETXTBSY if binary is running)
+    TMP_BIN=$(mktemp /tmp/flashtunnel_bin.XXXXXX)
+    TMP_MENU=$(mktemp /tmp/flashtunnel_menu.XXXXXX)
+    trap 'rm -f "$TMP_BIN" "$TMP_MENU"' EXIT
+
     echo -e "${CYAN}[*] Downloading FlashTunnel binary...${NC}"
-    curl -sSL --retry 3 --retry-delay 1 -o "$BIN_DEST" "${RAW_BASE}/bin/flashtunnel"
+    curl -sSL --retry 3 --retry-delay 1 -o "$TMP_BIN" "${RAW_BASE}/bin/flashtunnel"
     
     echo -e "${CYAN}[*] Downloading FlashTunnel manager...${NC}"
-    curl -sSL --retry 3 --retry-delay 1 -o "$MENU_DEST" "${RAW_BASE}/flashtunnel.sh"
+    curl -sSL --retry 3 --retry-delay 1 -o "$TMP_MENU" "${RAW_BASE}/flashtunnel.sh"
     
-    cp "$BIN_DEST" "${INSTALL_DIR}/flashtunnel" 2>/dev/null || true
-    cp "$MENU_DEST" "${INSTALL_DIR}/flashtunnel.sh" 2>/dev/null || true
+    # Safe replacement avoiding ETXTBSY (Text file busy) error
+    cp --remove-destination "$TMP_BIN" "$BIN_DEST" 2>/dev/null || (rm -f "$BIN_DEST" && cp "$TMP_BIN" "$BIN_DEST")
+    cp --remove-destination "$TMP_MENU" "$MENU_DEST" 2>/dev/null || (rm -f "$MENU_DEST" && cp "$TMP_MENU" "$MENU_DEST")
+    cp --remove-destination "$TMP_BIN" "${INSTALL_DIR}/flashtunnel" 2>/dev/null || true
+    cp --remove-destination "$TMP_MENU" "${INSTALL_DIR}/flashtunnel.sh" 2>/dev/null || true
 fi
 
 chmod +x "$BIN_DEST"
@@ -85,6 +92,17 @@ if [ ! -s "$BIN_DEST" ]; then
     echo -e "${RED}[!] Failed to download binary. Please check internet connection.${NC}"
     exit 1
 fi
+
+# Reload and restart active FlashTunnel services if upgrading
+for svc in /etc/systemd/system/flashtunnel*.service; do
+    if [ -f "$svc" ]; then
+        sname=$(basename "$svc")
+        if systemctl is-active --quiet "$sname" 2>/dev/null; then
+            echo -e "${YELLOW}[*] Restarting running service ${sname} to apply update...${NC}"
+            systemctl restart "$sname" 2>/dev/null || true
+        fi
+    fi
+done
 
 # Create Smart Global Wrapper
 cat > "$WRAPPER" << 'EOF'
