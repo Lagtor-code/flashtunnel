@@ -390,7 +390,9 @@ manage_single_tunnel() {
         echo -e "  ${RED}5)${NC} Delete Tunnel"
         echo -e "  ${BOLD}0)${NC} Back to Tunnel List"
         echo ""
-        read -p "Select an option [0-5]: " act
+        if ! read -p "Select an option [0-5]: " act; then
+            return
+        fi
 
         case "$act" in
             1)
@@ -463,7 +465,9 @@ manage_tunnels_menu() {
 
         echo -e "\n  ${BOLD}0)${NC} Back to Main Menu"
         echo ""
-        read -p "Select tunnel number to manage [0-$((idx-1))]: " sel
+        if ! read -p "Select tunnel number to manage [0-$((idx-1))]: " sel; then
+            return
+        fi
 
         if [ "$sel" == "0" ] || [ -z "$sel" ]; then
             return
@@ -585,7 +589,10 @@ main_menu() {
         echo -e "  ${RED}6)${NC} Uninstall FlashTunnel"
         echo -e "  ${BOLD}0)${NC} Exit"
         echo ""
-        read -p "Enter selection [0-6]: " choice
+        if ! read -p "Enter selection [0-6]: " choice; then
+            echo ""
+            exit 0
+        fi
 
         case "$choice" in
             1) add_server_tunnel ;;
