@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#   FlashTunnel - High-Performance TCP Stealth Tunnel
-#   Core: Native Zig Engine | Architecture: Pure TCP + TLS 1.3
+#   FlashTunnel - High-Performance TCP Stealth Tunnel Manager
+#   Features: Multi-Tunnel Support | Status & Ping Checker | Pure TCP
 # ==============================================================================
 
 set -e
 
 CONFIG_DIR="/etc/flashtunnel"
-CONFIG_FILE="${CONFIG_DIR}/config.env"
+TUNNELS_DIR="${CONFIG_DIR}/tunnels"
 BINARY_PATH="/usr/local/bin/flashtunnel-bin"
-SERVICE_FILE="/etc/systemd/system/flashtunnel.service"
+MENU_PATH="/usr/local/bin/flashtunnel-menu"
+WRAPPER_PATH="/usr/local/bin/flashtunnel"
 
 # Terminal Colors
 RED='\033[0;31m'
@@ -29,8 +30,10 @@ check_root() {
     fi
 }
 
-# Ensure binary is in place
-check_binary() {
+# Ensure directories and binary
+init_environment() {
+    mkdir -p "$CONFIG_DIR" "$TUNNELS_DIR"
+
     if [ ! -f "$BINARY_PATH" ]; then
         if [ -f "/usr/local/bin/mytunnel" ]; then
             cp /usr/local/bin/mytunnel "$BINARY_PATH"
@@ -40,7 +43,7 @@ check_binary() {
             cp ./flashtunnel "$BINARY_PATH"
         elif [ -f "./mytunnel_linux" ]; then
             cp ./mytunnel_linux "$BINARY_PATH"
-        elif [ -f "/usr/local/bin/flashtunnel" ] && file /usr/local/bin/flashtunnel | grep -q "ELF"; then
+        elif [ -f "/usr/local/bin/flashtunnel" ] && file /usr/local/bin/flashtunnel 2>/dev/null | grep -q "ELF"; then
             cp /usr/local/bin/flashtunnel "$BINARY_PATH"
         else
             echo -e "${RED}[!] FlashTunnel binary not found.${NC}"
@@ -50,10 +53,55 @@ check_binary() {
     chmod +x "$BINARY_PATH" 2>/dev/null || true
 
     # Install menu symlink
-    if [ -f "$0" ] && [ ! -f "/usr/local/bin/flashtunnel-menu" ]; then
-        cp "$0" /usr/local/bin/flashtunnel-menu 2>/dev/null || true
-        chmod +x /usr/local/bin/flashtunnel-menu 2>/dev/null || true
+    if [ -f "$0" ] && [ ! -f "$MENU_PATH" ]; then
+        cp "$0" "$MENU_PATH" 2>/dev/null || true
+        chmod +x "$MENU_PATH" 2>/dev/null || true
     fi
+
+    # Migrate legacy single config if present
+    if [ -f "${CONFIG_DIR}/config.env" ] && [ ! -f "${TUNNELS_DIR}/default.conf" ]; then
+        cp "${CONFIG_DIR}/config.env" "${TUNNELS_DIR}/default.conf"
+    fi
+}
+
+# Robust Public IP Detection
+get_public_ip() {
+    local ip=""
+    for service in "https://api.ipify.org" "https://icanhazip.com" "https://ifconfig.io/ip" "https://ipinfo.io/ip"; do
+        ip=$(curl -s4 -m 2 "$service" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "$ip"
+            return
+        fi
+    done
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}' | tr -d '[:space:]')
+    if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "$ip"
+    else
+        echo "127.0.0.1"
+    fi
+}
+
+# Check TCP Latency in ms using python3 or /dev/tcp
+measure_latency() {
+    local host="$1"
+    local port="$2"
+    if [ -z "$host" ] || [ -z "$port" ]; then
+        echo "N/A"
+        return
+    fi
+
+    python3 -c "
+import socket, time, sys
+t0 = time.perf_counter()
+try:
+    s = socket.create_connection(('$host', int('$port')), timeout=2.0)
+    lat = (time.perf_counter() - t0) * 1000.0
+    s.close()
+    print(f'{lat:.1f}ms')
+except Exception:
+    print('TIMEOUT')
+" 2>/dev/null || echo "TIMEOUT"
 }
 
 # Header Banner
@@ -61,72 +109,103 @@ show_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  +------------------------------------------------------------+"
-    echo "  |                FlashTunnel Manager                         |"
+    echo "  |                    FlashTunnel Manager                     |"
     echo "  |        High-Performance TCP Stealth Tunnel for Linux       |"
     echo "  +------------------------------------------------------------+"
     echo -e "${NC}"
 }
 
+# List All Configured Tunnels
+get_tunnel_list() {
+    find "$TUNNELS_DIR" -maxdepth 1 -name "*.conf" -type f 2>/dev/null | sort
+}
+
 # Show Dashboard Status
 show_status() {
-    if [ -f "$CONFIG_FILE" ]; then
-        source "$CONFIG_FILE"
-        local status_text
-        if systemctl is-active --quiet flashtunnel 2>/dev/null || systemctl is-active --quiet mytunnel 2>/dev/null; then
-            status_text="${GREEN}Active (Running)${NC}"
-        else
-            status_text="${RED}Inactive (Stopped)${NC}"
+    local configs=($(get_tunnel_list))
+    echo -e "${BOLD}[ Configured Tunnels ]${NC}"
+
+    if [ ${#configs[@]} -eq 0 ]; then
+        echo -e "  ${YELLOW}No tunnels configured yet. Use option 1 or 2 to add one.${NC}"
+        echo -e "----------------------------------------------------------------"
+        echo ""
+        return
+    fi
+
+    printf "  %-12s %-8s %-10s %-14s %-24s\n" "NAME" "ROLE" "STATUS" "LISTEN PORT" "REMOTE/TARGET"
+    echo -e "  ----------------------------------------------------------------------"
+
+    for conf in "${configs[@]}"; do
+        source "$conf"
+        local t_name=$(basename "$conf" .conf)
+        local svc_name="flashtunnel-${t_name}"
+        # support legacy service name for default
+        if [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null; then
+            svc_name="flashtunnel"
         fi
 
-        echo -e "${BOLD}[ Tunnel Status ]${NC}"
-        echo -e "  Service Status : ${status_text}"
-        echo -e "  Node Role      : ${YELLOW}${ROLE^^}${NC}"
-        if [ "$ROLE" == "server" ]; then
-            echo -e "  Tunnel Port    : ${CYAN}${TUNNEL_PORT}${NC}"
-            echo -e "  Target Port    : ${GREEN}${XRAY_PORT}${NC}"
-        else
-            echo -e "  Remote Server  : ${CYAN}${SERVER_IP}:${TUNNEL_PORT}${NC}"
-            echo -e "  Listen Port    : ${GREEN}${XRAY_PORT}${NC}"
-            if [ -n "$EXTRA_PORTS" ]; then
-                echo -e "  Redirect Ports : ${YELLOW}${EXTRA_PORTS}${NC}"
-            fi
+        local status_str="${RED}STOPPED${NC}"
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            status_str="${GREEN}RUNNING${NC}"
         fi
-        echo -e "  Security Key   : ${PURPLE}${KEY}${NC}"
-        echo -e "  Desync Mode    : ${BOLD}multidisorder (Active)${NC}"
-        echo -e "----------------------------------------------------------------"
-    else
-        echo -e "${YELLOW}[!] FlashTunnel is not configured on this server yet.${NC}"
-    fi
+
+        local remote_info=""
+        local listen_info=""
+        if [ "$ROLE" == "server" ]; then
+            listen_info="${TUNNEL_PORT}"
+            remote_info="127.0.0.1:${XRAY_PORT}"
+        else
+            listen_info="${XRAY_PORT}"
+            [ -n "$EXTRA_PORTS" ] && listen_info="${XRAY_PORT} (+${EXTRA_PORTS})"
+            remote_info="${SERVER_IP}:${TUNNEL_PORT}"
+        fi
+
+        printf "  %-12s %-8s %-19b %-14s %-24s\n" "$t_name" "${ROLE^^}" "$status_str" "$listen_info" "$remote_info"
+    done
+    echo -e "----------------------------------------------------------------"
     echo ""
 }
 
-# Install / Setup Server (Kharej)
-setup_server() {
+# Add New Server Tunnel
+add_server_tunnel() {
     show_banner
-    echo -e "${GREEN}${BOLD}=== Configure Server (Foreign / Upstream) ===${NC}\n"
+    echo -e "${GREEN}${BOLD}=== Add New Server Tunnel (Foreign / Upstream) ===${NC}\n"
 
-    read -p "Tunnel listen port for incoming relay connections [default: 4433]: " TUNNEL_PORT
+    read -p "Tunnel identifier name [default: server1]: " T_NAME
+    T_NAME=${T_NAME:-server1}
+    T_NAME=$(echo "$T_NAME" | tr -dc 'a-zA-Z0-9_-')
+
+    if [ -f "${TUNNELS_DIR}/${T_NAME}.conf" ]; then
+        echo -e "${RED}[!] A tunnel with name '${T_NAME}' already exists.${NC}"
+        read -p "Press Enter to return..." dummy
+        return
+    fi
+
+    read -p "Tunnel listen port for incoming relay [default: 4433]: " TUNNEL_PORT
     TUNNEL_PORT=${TUNNEL_PORT:-4433}
 
-    read -p "Target service port on localhost [default: 443]: " XRAY_PORT
+    read -p "Local target service port (e.g. Xray) [default: 443]: " XRAY_PORT
     XRAY_PORT=${XRAY_PORT:-443}
 
-    DEFAULT_KEY=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16 ; echo '')
-    read -p "Tunnel security key [default: $DEFAULT_KEY]: " KEY
-    KEY=${KEY:-$DEFAULT_KEY}
+    local default_key="FlashKey2026"
+    read -p "Tunnel security key [default: ${default_key}]: " INPUT_KEY
+    KEY=${INPUT_KEY:-$default_key}
 
-    mkdir -p "$CONFIG_DIR"
-    cat > "$CONFIG_FILE" <<EOF
+    # Save Config
+    cat > "${TUNNELS_DIR}/${T_NAME}.conf" <<EOF
+NAME=$T_NAME
 ROLE=server
 TUNNEL_PORT=$TUNNEL_PORT
 XRAY_PORT=$XRAY_PORT
 KEY=$KEY
+CREATED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
 
-    # Create Systemd Service
-    cat > "$SERVICE_FILE" <<EOF
+    # Create Systemd Unit
+    local svc_file="/etc/systemd/system/flashtunnel-${T_NAME}.service"
+    cat > "$svc_file" <<EOF
 [Unit]
-Description=FlashTunnel Server
+Description=FlashTunnel Server Instance (${T_NAME})
 After=network.target
 
 [Service]
@@ -142,22 +221,32 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now flashtunnel
+    systemctl enable --now "flashtunnel-${T_NAME}"
 
-    echo -e "\n${GREEN}[+] Server configured and started successfully!${NC}"
-    local EXT_IP=$(curl -s4 ifconfig.me || hostname -I | awk '{print $1}')
-    echo -e "${CYAN}Connection parameters for Relay / Client:${NC}"
-    echo -e "  Server IP    : ${BOLD}${EXT_IP}${NC}"
-    echo -e "  Tunnel Port  : ${BOLD}${TUNNEL_PORT}${NC}"
-    echo -e "  Security Key : ${BOLD}${KEY}${NC}"
+    echo -e "\n${GREEN}[+] Server tunnel '${T_NAME}' created and started successfully!${NC}"
+    local EXT_IP=$(get_public_ip)
+    echo -e "${CYAN}Connection parameters for Client / Relay:${NC}"
+    echo -e "  Server Address : ${BOLD}${EXT_IP}${NC}"
+    echo -e "  Tunnel Port    : ${BOLD}${TUNNEL_PORT}${NC}"
+    echo -e "  Security Key   : ${BOLD}${KEY}${NC}"
     echo ""
     read -p "Press Enter to return to menu..." dummy
 }
 
-# Install / Setup Client (Iran Relay)
-setup_client() {
+# Add New Client Tunnel (Relay)
+add_client_tunnel() {
     show_banner
-    echo -e "${GREEN}${BOLD}=== Configure Client (Relay / Local) ===${NC}\n"
+    echo -e "${GREEN}${BOLD}=== Add New Client Tunnel (Relay / Local) ===${NC}\n"
+
+    read -p "Tunnel identifier name [default: relay1]: " T_NAME
+    T_NAME=${T_NAME:-relay1}
+    T_NAME=$(echo "$T_NAME" | tr -dc 'a-zA-Z0-9_-')
+
+    if [ -f "${TUNNELS_DIR}/${T_NAME}.conf" ]; then
+        echo -e "${RED}[!] A tunnel with name '${T_NAME}' already exists.${NC}"
+        read -p "Press Enter to return..." dummy
+        return
+    fi
 
     read -p "Remote Server IP address: " SERVER_IP
     while [ -z "$SERVER_IP" ]; do
@@ -167,25 +256,26 @@ setup_client() {
     read -p "Tunnel port on remote server [default: 4433]: " TUNNEL_PORT
     TUNNEL_PORT=${TUNNEL_PORT:-4433}
 
-    read -p "Local incoming listen port [default: 443]: " XRAY_PORT
+    read -p "Local incoming listen port for clients [default: 443]: " XRAY_PORT
     XRAY_PORT=${XRAY_PORT:-443}
 
     read -p "Additional redirected ports (comma-separated) [default: 8443,2087,8080]: " EXTRA_PORTS
     EXTRA_PORTS=${EXTRA_PORTS:-"8443,2087,8080"}
 
-    read -p "Tunnel security key (must match server): " KEY
-    while [ -z "$KEY" ]; do
-        read -p "Security key is required: " KEY
-    done
+    local default_key="FlashKey2026"
+    read -p "Tunnel security key (must match server) [default: ${default_key}]: " INPUT_KEY
+    KEY=${INPUT_KEY:-$default_key}
 
-    mkdir -p "$CONFIG_DIR"
-    cat > "$CONFIG_FILE" <<EOF
+    # Save Config
+    cat > "${TUNNELS_DIR}/${T_NAME}.conf" <<EOF
+NAME=$T_NAME
 ROLE=client
 SERVER_IP=$SERVER_IP
 TUNNEL_PORT=$TUNNEL_PORT
 XRAY_PORT=$XRAY_PORT
 EXTRA_PORTS=$EXTRA_PORTS
 KEY=$KEY
+CREATED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 EOF
 
     # Configure Multi-port redirection via iptables
@@ -196,10 +286,11 @@ EOF
         PRE_EXEC="ExecStartPre=/sbin/iptables -t nat -A PREROUTING -p tcp -m multiport --dports ${EXTRA_PORTS} -j REDIRECT --to-ports ${XRAY_PORT}"
     fi
 
-    # Create Systemd Service
-    cat > "$SERVICE_FILE" <<EOF
+    # Create Systemd Unit
+    local svc_file="/etc/systemd/system/flashtunnel-${T_NAME}.service"
+    cat > "$svc_file" <<EOF
 [Unit]
-Description=FlashTunnel Client
+Description=FlashTunnel Client Instance (${T_NAME})
 After=network.target
 
 [Service]
@@ -216,10 +307,10 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now flashtunnel
+    systemctl enable --now "flashtunnel-${T_NAME}"
 
-    echo -e "\n${GREEN}[+] Client relay configured and started successfully!${NC}"
-    local EXT_IP=$(curl -s4 ifconfig.me || hostname -I | awk '{print $1}')
+    echo -e "\n${GREEN}[+] Client relay tunnel '${T_NAME}' created and started successfully!${NC}"
+    local EXT_IP=$(get_public_ip)
     echo -e "${CYAN}Client connection details:${NC}"
     echo -e "  Relay Address  : ${BOLD}${EXT_IP}${NC}"
     echo -e "  Main Port      : ${BOLD}${XRAY_PORT}${NC}"
@@ -230,76 +321,242 @@ EOF
     read -p "Press Enter to return to menu..." dummy
 }
 
-# View Live Logs
-view_logs() {
-    echo -e "${CYAN}Streaming live logs (Press Ctrl+C to exit)...${NC}\n"
-    journalctl -u flashtunnel -u mytunnel -f --no-pager
+# Manage Individual Tunnel
+manage_single_tunnel() {
+    local conf_file="$1"
+    local t_name=$(basename "$conf_file" .conf)
+    local svc_name="flashtunnel-${t_name}"
+    [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
+
+    while true; do
+        source "$conf_file"
+        show_banner
+        echo -e "${BOLD}Managing Tunnel: ${CYAN}${t_name}${NC} (${YELLOW}${ROLE^^}${NC})"
+        echo -e "----------------------------------------------------------------"
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            echo -e "  Status: ${GREEN}Active (Running)${NC}"
+        else
+            echo -e "  Status: ${RED}Inactive (Stopped)${NC}"
+        fi
+
+        if [ "$ROLE" == "server" ]; then
+            echo -e "  Listen Port : ${TUNNEL_PORT} -> Local Target: ${XRAY_PORT}"
+        else
+            echo -e "  Listen Port : ${XRAY_PORT} -> Remote Server: ${SERVER_IP}:${TUNNEL_PORT}"
+        fi
+        echo -e "  Security Key: ${KEY}"
+        echo -e "----------------------------------------------------------------"
+        echo -e "  ${GREEN}1)${NC} Start Tunnel"
+        echo -e "  ${YELLOW}2)${NC} Stop Tunnel"
+        echo -e "  ${CYAN}3)${NC} Restart Tunnel"
+        echo -e "  ${BLUE}4)${NC} View Live Logs"
+        echo -e "  ${RED}5)${NC} Delete Tunnel"
+        echo -e "  ${BOLD}0)${NC} Back to Tunnel List"
+        echo ""
+        read -p "Select an option [0-5]: " act
+
+        case "$act" in
+            1)
+                systemctl start "$svc_name"
+                echo -e "${GREEN}[+] Tunnel started.${NC}"
+                sleep 1
+                ;;
+            2)
+                systemctl stop "$svc_name"
+                echo -e "${YELLOW}[+] Tunnel stopped.${NC}"
+                sleep 1
+                ;;
+            3)
+                systemctl restart "$svc_name"
+                echo -e "${GREEN}[+] Tunnel restarted.${NC}"
+                sleep 1
+                ;;
+            4)
+                echo -e "${CYAN}Streaming live logs for ${svc_name} (Press Ctrl+C to exit)...${NC}\n"
+                journalctl -u "$svc_name" -f --no-pager
+                ;;
+            5)
+                read -p "Are you sure you want to delete tunnel '${t_name}'? (y/n): " confirm
+                if [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+                    systemctl stop "$svc_name" 2>/dev/null || true
+                    systemctl disable "$svc_name" 2>/dev/null || true
+                    rm -f "/etc/systemd/system/${svc_name}.service"
+                    rm -f "$conf_file"
+                    systemctl daemon-reload
+                    echo -e "${GREEN}[+] Tunnel '${t_name}' deleted successfully.${NC}"
+                    sleep 1
+                    return
+                fi
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo -e "${RED}[!] Invalid choice.${NC}"; sleep 1
+                ;;
+        esac
+    done
 }
 
-# Restart Service
-restart_tunnel() {
-    echo -e "${YELLOW}[*] Restarting service...${NC}"
-    systemctl restart flashtunnel 2>/dev/null || systemctl restart mytunnel 2>/dev/null || true
-    echo -e "${GREEN}[+] Service restarted successfully.${NC}"
-    sleep 1
+# Manage Tunnels Submenu
+manage_tunnels_menu() {
+    while true; do
+        show_banner
+        local configs=($(get_tunnel_list))
+        echo -e "${BOLD}=== Manage Existing Tunnels ===${NC}\n"
+
+        if [ ${#configs[@]} -eq 0 ]; then
+            echo -e "${YELLOW}No tunnels configured yet.${NC}"
+            read -p "Press Enter to return..." dummy
+            return
+        fi
+
+        local idx=1
+        for conf in "${configs[@]}"; do
+            source "$conf"
+            local t_name=$(basename "$conf" .conf)
+            local svc_name="flashtunnel-${t_name}"
+            [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
+
+            local st="${RED}STOPPED${NC}"
+            systemctl is-active --quiet "$svc_name" 2>/dev/null && st="${GREEN}RUNNING${NC}"
+            echo -e "  ${BOLD}${idx})${NC} ${CYAN}${t_name}${NC} [${YELLOW}${ROLE^^}${NC}] - ${st}"
+            idx=$((idx + 1))
+        done
+
+        echo -e "\n  ${BOLD}0)${NC} Back to Main Menu"
+        echo ""
+        read -p "Select tunnel number to manage [0-$((idx-1))]: " sel
+
+        if [ "$sel" == "0" ] || [ -z "$sel" ]; then
+            return
+        elif [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -lt "$idx" ]; then
+            local target_conf="${configs[$((sel-1))]}"
+            manage_single_tunnel "$target_conf"
+        else
+            echo -e "${RED}[!] Invalid selection.${NC}"; sleep 1
+        fi
+    done
 }
 
-# Stop Service
-stop_tunnel() {
-    echo -e "${YELLOW}[*] Stopping service...${NC}"
-    systemctl stop flashtunnel 2>/dev/null || systemctl stop mytunnel 2>/dev/null || true
-    echo -e "${GREEN}[+] Service stopped.${NC}"
-    sleep 1
+# Check Tunnel Status & Ping / Latency
+check_status_and_ping() {
+    show_banner
+    echo -e "${BOLD}=== Tunnel Connectivity & Latency Check ===${NC}\n"
+
+    local configs=($(get_tunnel_list))
+    if [ ${#configs[@]} -eq 0 ]; then
+        echo -e "${YELLOW}No tunnels configured to check.${NC}"
+        read -p "Press Enter to return..." dummy
+        return
+    fi
+
+    for conf in "${configs[@]}"; do
+        source "$conf"
+        local t_name=$(basename "$conf" .conf)
+        local svc_name="flashtunnel-${t_name}"
+        [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
+
+        echo -e "${BOLD}Tunnel: ${CYAN}${t_name}${NC} (${ROLE^^})"
+
+        # 1. Service Status
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            echo -e "  [+] Service State : ${GREEN}ACTIVE (Running)${NC}"
+        else
+            echo -e "  [-] Service State : ${RED}INACTIVE (Stopped)${NC}"
+        fi
+
+        # 2. Port listening check
+        local l_port="$XRAY_PORT"
+        [ "$ROLE" == "server" ] && l_port="$TUNNEL_PORT"
+        if ss -tlnp 2>/dev/null | grep -q ":${l_port} "; then
+            echo -e "  [+] Listen Port   : ${GREEN}Port ${l_port} is OPEN and listening${NC}"
+        else
+            echo -e "  [-] Listen Port   : ${YELLOW}Port ${l_port} is NOT actively listening${NC}"
+        fi
+
+        # 3. Latency & Ping
+        if [ "$ROLE" == "client" ]; then
+            echo -n "  [*] Checking latency to remote server (${SERVER_IP}:${TUNNEL_PORT})... "
+            local lat=$(measure_latency "$SERVER_IP" "$TUNNEL_PORT")
+            if [ "$lat" != "TIMEOUT" ]; then
+                echo -e "${GREEN}CONNECTED (${lat})${NC}"
+            else
+                echo -e "${RED}TIMEOUT / UNREACHABLE${NC}"
+            fi
+        else
+            echo -n "  [*] Checking latency to local target (127.0.0.1:${XRAY_PORT})... "
+            local lat=$(measure_latency "127.0.0.1" "$XRAY_PORT")
+            if [ "$lat" != "TIMEOUT" ]; then
+                echo -e "${GREEN}REACHABLE (${lat})${NC}"
+            else
+                echo -e "${YELLOW}LOCAL PORT NOT RESPONDING${NC}"
+            fi
+        fi
+        echo -e "----------------------------------------------------------------"
+    done
+
+    echo ""
+    read -p "Press Enter to return to menu..." dummy
 }
 
-# Uninstall
-uninstall_tunnel() {
-    read -p "Are you sure you want to completely remove FlashTunnel? (y/n): " confirm
+# View Live Logs for All
+view_all_logs() {
+    echo -e "${CYAN}Streaming live logs for all FlashTunnel services (Press Ctrl+C to exit)...${NC}\n"
+    journalctl -u "flashtunnel*" -f --no-pager
+}
+
+# Uninstall Everything
+uninstall_all() {
+    read -p "Are you sure you want to remove FlashTunnel and ALL tunnels? (y/n): " confirm
     if [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
-        systemctl stop flashtunnel 2>/dev/null || true
-        systemctl disable flashtunnel 2>/dev/null || true
-        systemctl stop mytunnel 2>/dev/null || true
-        systemctl disable mytunnel 2>/dev/null || true
-        rm -f "$SERVICE_FILE"
+        for svc in /etc/systemd/system/flashtunnel*.service; do
+            if [ -f "$svc" ]; then
+                local b_svc=$(basename "$svc")
+                systemctl stop "$b_svc" 2>/dev/null || true
+                systemctl disable "$b_svc" 2>/dev/null || true
+                rm -f "$svc"
+            fi
+        done
         systemctl daemon-reload
         rm -rf "$CONFIG_DIR"
         rm -f "$BINARY_PATH"
-        rm -f /usr/local/bin/flashtunnel-menu
-        rm -f /usr/local/bin/flashtunnel
-        echo -e "${GREEN}[+] FlashTunnel has been completely removed.${NC}"
+        rm -f "$MENU_PATH"
+        rm -f "$WRAPPER_PATH"
+        echo -e "${GREEN}[+] FlashTunnel and all tunnels completely removed.${NC}"
     else
-        echo -e "${YELLOW}[*] Action cancelled.${NC}"
+        echo -e "${YELLOW}[*] Cancelled.${NC}"
     fi
     sleep 1
 }
 
-# Main Loop
+# Main Interactive Loop
 main_menu() {
     check_root
-    check_binary
+    init_environment
 
     while true; do
         show_banner
         show_status
 
         echo -e "${BOLD}Select an option:${NC}"
-        echo -e "  ${GREEN}1)${NC} Configure Server (Foreign / Upstream)"
-        echo -e "  ${GREEN}2)${NC} Configure Client (Relay / Local)"
-        echo -e "  ${CYAN}3)${NC} View Live Logs"
-        echo -e "  ${YELLOW}4)${NC} Restart Service"
-        echo -e "  ${YELLOW}5)${NC} Stop Service"
-        echo -e "  ${RED}6)${NC} Uninstall"
+        echo -e "  ${GREEN}1)${NC} Add New Server Tunnel (Foreign / Upstream)"
+        echo -e "  ${GREEN}2)${NC} Add New Client Tunnel (Relay / Local)"
+        echo -e "  ${CYAN}3)${NC} Manage Tunnels (Start / Stop / Restart / Delete)"
+        echo -e "  ${BLUE}4)${NC} Check Status & Ping / Latency"
+        echo -e "  ${YELLOW}5)${NC} View Live Logs"
+        echo -e "  ${RED}6)${NC} Uninstall FlashTunnel"
         echo -e "  ${BOLD}0)${NC} Exit"
         echo ""
         read -p "Enter selection [0-6]: " choice
 
         case "$choice" in
-            1) setup_server ;;
-            2) setup_client ;;
-            3) view_logs ;;
-            4) restart_tunnel ;;
-            5) stop_tunnel ;;
-            6) uninstall_tunnel ;;
+            1) add_server_tunnel ;;
+            2) add_client_tunnel ;;
+            3) manage_tunnels_menu ;;
+            4) check_status_and_ping ;;
+            5) view_all_logs ;;
+            6) uninstall_all ;;
             0) exit 0 ;;
             *) echo -e "${RED}[!] Invalid selection.${NC}"; sleep 1 ;;
         esac

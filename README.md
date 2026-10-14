@@ -5,6 +5,8 @@ High-performance, lightweight TCP stealth tunnel designed for secure, low-latenc
 ## Features
 
 - Native Zig Core: Minimal memory footprint (<0.5MB baseline) with zero garbage collection overhead.
+- Multi-Tunnel Engine: Create, monitor, restart, and manage multiple independent tunnels concurrently.
+- Built-in Connectivity & Latency Checker: Direct TCP RTT (ping) measurement and port status inspection.
 - TLS 1.3 Record Carrier: Streams are encapsulated within standard TLS records for protocol masking.
 - Integrated Anti-DPI Segmentation: Out-of-order TCP segmentation with sequence overlap and urgent flag signaling directly at the transport layer.
 - ChaCha20-Poly1305 AEAD: Authenticated end-to-end encryption with vectorized processing.
