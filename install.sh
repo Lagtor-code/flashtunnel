@@ -34,7 +34,7 @@ fi
 
 echo -e "${YELLOW}[*] Checking prerequisites...${NC}"
 MISSING_PKGS=""
-for pkg in curl git iptables; do
+for pkg in curl iptables; do
     if ! command -v "$pkg" >/dev/null 2>&1; then
         MISSING_PKGS="$MISSING_PKGS $pkg"
     fi
@@ -47,47 +47,44 @@ if [ -n "$MISSING_PKGS" ]; then
     apt-get install -y --no-install-recommends $MISSING_PKGS >/dev/null 2>&1 || true
 fi
 
-REPO_URL="https://github.com/Lagtor-code/flashtunnel.git"
+RAW_BASE="https://raw.githubusercontent.com/Lagtor-code/flashtunnel/main"
 INSTALL_DIR="/opt/flashtunnel"
 BIN_DEST="/usr/local/bin/flashtunnel-bin"
 MENU_DEST="/usr/local/bin/flashtunnel-menu"
 WRAPPER="/usr/local/bin/flashtunnel"
 
+mkdir -p "$INSTALL_DIR"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 
 echo -e "${YELLOW}[*] Fetching latest FlashTunnel release...${NC}"
 
+# 1. Try local files first
 if [ -f "${SCRIPT_DIR}/bin/flashtunnel" ] && [ -f "${SCRIPT_DIR}/flashtunnel.sh" ]; then
-    mkdir -p "$INSTALL_DIR"
+    echo -e "${GREEN}[*] Installing from local files...${NC}"
+    cp "${SCRIPT_DIR}/bin/flashtunnel" "$BIN_DEST"
+    cp "${SCRIPT_DIR}/flashtunnel.sh" "$MENU_DEST"
     cp -r "${SCRIPT_DIR}"/* "$INSTALL_DIR/" 2>/dev/null || true
 else
-    if [ -d "$INSTALL_DIR/.git" ]; then
-        cd "$INSTALL_DIR" && git pull --quiet || true
-    else
-        rm -rf "$INSTALL_DIR"
-        git clone --depth=1 "$REPO_URL" "$INSTALL_DIR"
-    fi
+    # 2. Direct fast curl download (bypasses git TLS handshake restrictions in Iran)
+    echo -e "${CYAN}[*] Downloading FlashTunnel binary...${NC}"
+    curl -sSL --retry 3 --retry-delay 1 -o "$BIN_DEST" "${RAW_BASE}/bin/flashtunnel"
+    
+    echo -e "${CYAN}[*] Downloading FlashTunnel manager...${NC}"
+    curl -sSL --retry 3 --retry-delay 1 -o "$MENU_DEST" "${RAW_BASE}/flashtunnel.sh"
+    
+    cp "$BIN_DEST" "${INSTALL_DIR}/flashtunnel" 2>/dev/null || true
+    cp "$MENU_DEST" "${INSTALL_DIR}/flashtunnel.sh" 2>/dev/null || true
 fi
 
-# Install Binary
-if [ -f "${INSTALL_DIR}/bin/flashtunnel" ]; then
-    cp "${INSTALL_DIR}/bin/flashtunnel" "$BIN_DEST"
-elif [ -f "${INSTALL_DIR}/flashtunnel" ]; then
-    cp "${INSTALL_DIR}/flashtunnel" "$BIN_DEST"
-else
-    echo -e "${RED}[!] Binary not found in repository.${NC}"
-    exit 1
-fi
 chmod +x "$BIN_DEST"
+chmod +x "$MENU_DEST"
 
-# Install Menu Script
-if [ -f "${INSTALL_DIR}/flashtunnel.sh" ]; then
-    cp "${INSTALL_DIR}/flashtunnel.sh" "$MENU_DEST"
-else
-    echo -e "${RED}[!] flashtunnel.sh not found in repository.${NC}"
+# Verify binary
+if [ ! -s "$BIN_DEST" ]; then
+    echo -e "${RED}[!] Failed to download binary. Please check internet connection.${NC}"
     exit 1
 fi
-chmod +x "$MENU_DEST"
 
 # Create Smart Global Wrapper
 cat > "$WRAPPER" << 'EOF'
