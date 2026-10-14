@@ -4,8 +4,6 @@
 #   Features: Multi-Tunnel Support | Status & Ping Checker | Pure TCP
 # ==============================================================================
 
-set -e
-
 CONFIG_DIR="/etc/flashtunnel"
 TUNNELS_DIR="${CONFIG_DIR}/tunnels"
 BINARY_PATH="/usr/local/bin/flashtunnel-bin"
@@ -64,6 +62,43 @@ init_environment() {
     fi
 }
 
+# Safe config parser (never crashes on bad quotes, syntax errors, or special characters)
+load_conf() {
+    local conf_file="$1"
+    NAME=""
+    ROLE=""
+    TUNNEL_PORT=""
+    XRAY_PORT=""
+    SERVER_IP=""
+    EXTRA_PORTS=""
+    KEY=""
+    CREATED_AT=""
+
+    [ ! -f "$conf_file" ] && return 1
+
+    while IFS='=' read -r raw_key raw_val || [ -n "$raw_key" ]; do
+        local key=$(echo "$raw_key" | tr -d '[:space:]')
+        [[ -z "$key" || "$key" =~ ^# ]] && continue
+        
+        # Clean value: strip carriage returns, surrounding quotes, and dangling escape backslashes
+        local val=$(echo "$raw_val" | tr -d '\r' | sed -e 's/^[[:space:]]*["'\'']//' -e 's/["'\''][[:space:]]*$//' -e 's/\\$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+        case "$key" in
+            NAME)        NAME="$val" ;;
+            ROLE)        ROLE="$val" ;;
+            TUNNEL_PORT) TUNNEL_PORT="$val" ;;
+            XRAY_PORT)   XRAY_PORT="$val" ;;
+            SERVER_IP)   SERVER_IP="$val" ;;
+            EXTRA_PORTS) EXTRA_PORTS="$val" ;;
+            KEY)         KEY="$val" ;;
+            CREATED_AT)  CREATED_AT="$val" ;;
+        esac
+    done < "$conf_file"
+
+    [ -z "$NAME" ] && NAME=$(basename "$conf_file" .conf)
+    return 0
+}
+
 # Robust Public IP Detection
 get_public_ip() {
     local ip=""
@@ -106,7 +141,7 @@ except Exception:
 
 # Header Banner
 show_banner() {
-    clear
+    clear 2>/dev/null || true
     echo -e "${CYAN}${BOLD}"
     echo "  +------------------------------------------------------------+"
     echo "  |                    FlashTunnel Manager                     |"
@@ -136,7 +171,7 @@ show_status() {
     echo -e "  ----------------------------------------------------------------------"
 
     for conf in "${configs[@]}"; do
-        source "$conf"
+        load_conf "$conf"
         local t_name=$(basename "$conf" .conf)
         local svc_name="flashtunnel-${t_name}"
         # support legacy service name for default
@@ -192,13 +227,14 @@ add_server_tunnel() {
     KEY=${INPUT_KEY:-$default_key}
 
     # Save Config
+    local now_str=$(date '+%Y-%m-%d_%H:%M:%S' 2>/dev/null || echo "2026-10-14")
     cat > "${TUNNELS_DIR}/${T_NAME}.conf" <<EOF
 NAME=$T_NAME
 ROLE=server
 TUNNEL_PORT=$TUNNEL_PORT
 XRAY_PORT=$XRAY_PORT
 KEY=$KEY
-CREATED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
+CREATED_AT=$now_str
 EOF
 
     # Create Systemd Unit
@@ -267,6 +303,7 @@ add_client_tunnel() {
     KEY=${INPUT_KEY:-$default_key}
 
     # Save Config
+    local now_str=$(date '+%Y-%m-%d_%H:%M:%S' 2>/dev/null || echo "2026-10-14")
     cat > "${TUNNELS_DIR}/${T_NAME}.conf" <<EOF
 NAME=$T_NAME
 ROLE=client
@@ -275,7 +312,7 @@ TUNNEL_PORT=$TUNNEL_PORT
 XRAY_PORT=$XRAY_PORT
 EXTRA_PORTS=$EXTRA_PORTS
 KEY=$KEY
-CREATED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
+CREATED_AT=$now_str
 EOF
 
     # Configure Multi-port redirection via iptables
@@ -329,7 +366,7 @@ manage_single_tunnel() {
     [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
 
     while true; do
-        source "$conf_file"
+        load_conf "$conf_file"
         show_banner
         echo -e "${BOLD}Managing Tunnel: ${CYAN}${t_name}${NC} (${YELLOW}${ROLE^^}${NC})"
         echo -e "----------------------------------------------------------------"
@@ -413,7 +450,7 @@ manage_tunnels_menu() {
 
         local idx=1
         for conf in "${configs[@]}"; do
-            source "$conf"
+            load_conf "$conf"
             local t_name=$(basename "$conf" .conf)
             local svc_name="flashtunnel-${t_name}"
             [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
@@ -452,7 +489,7 @@ check_status_and_ping() {
     fi
 
     for conf in "${configs[@]}"; do
-        source "$conf"
+        load_conf "$conf"
         local t_name=$(basename "$conf" .conf)
         local svc_name="flashtunnel-${t_name}"
         [ "$t_name" == "default" ] && systemctl is-active --quiet flashtunnel 2>/dev/null && svc_name="flashtunnel"
