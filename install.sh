@@ -97,7 +97,7 @@ cat > "$WRAPPER" << 'EOF'
 if [ $# -eq 0 ]; then
     if [ -t 0 ]; then
         exec /usr/local/bin/flashtunnel-menu
-    elif [ -c /dev/tty ]; then
+    elif [ -c /dev/tty ] && (true < /dev/tty) 2>/dev/null; then
         exec /usr/local/bin/flashtunnel-menu </dev/tty
     else
         exec /usr/local/bin/flashtunnel-menu
@@ -114,6 +114,6 @@ echo -e "${CYAN}از این پس با تایپ دستور ${BOLD}flashtunnel${NC
 # Launch Menu if interactive
 if [ -t 0 ]; then
     exec /usr/local/bin/flashtunnel-menu
-elif [ -c /dev/tty ]; then
+elif [ -c /dev/tty ] && (true < /dev/tty) 2>/dev/null; then
     exec /usr/local/bin/flashtunnel-menu </dev/tty
 fi
