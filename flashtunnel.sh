@@ -206,6 +206,18 @@ add_server_tunnel() {
     show_banner
     echo -e "${GREEN}${BOLD}=== Add New Server Tunnel (Foreign / Upstream) ===${NC}\n"
 
+    echo -e "${CYAN}Port Configuration Guide:${NC}"
+    echo -e "  - ${BOLD}Tunnel Listen Port${NC}    : The external port FlashTunnel listens on to receive encrypted"
+    echo -e "                            traffic from your Iran relay (e.g. 4433, 8443)."
+    echo -e "  - ${BOLD}Local Target Service Port${NC}: The internal port of your VPN/proxy core (e.g. Xray/V2Ray in 3X-UI)."
+    echo -e "                            FlashTunnel forwards decrypted traffic to 127.0.0.1:<target_port>."
+    
+    local active_ports=$(ss -tlnp 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$' | sort -nu | tr '\n' ' ')
+    if [ -n "$active_ports" ]; then
+        echo -e "  - ${YELLOW}Detected Active Ports${NC}  : ${active_ports}"
+    fi
+    echo -e "----------------------------------------------------------------\n"
+
     read -p "Tunnel identifier name [default: server1]: " T_NAME
     T_NAME=${T_NAME:-server1}
     T_NAME=$(echo "$T_NAME" | tr -dc 'a-zA-Z0-9_-')
@@ -219,8 +231,13 @@ add_server_tunnel() {
     read -p "Tunnel listen port for incoming relay [default: 4433]: " TUNNEL_PORT
     TUNNEL_PORT=${TUNNEL_PORT:-4433}
 
-    read -p "Local target service port (e.g. Xray) [default: 443]: " XRAY_PORT
+    read -p "Local target service port (e.g. Xray inbound port) [default: 443]: " XRAY_PORT
     XRAY_PORT=${XRAY_PORT:-443}
+
+    if ! ss -tlnp 2>/dev/null | grep -qE "(:|\])${XRAY_PORT} "; then
+        echo -e "\n${YELLOW}[!] Warning: No service is currently listening on port ${XRAY_PORT}.${NC}"
+        echo -e "    Ensure your VPN inbound (e.g. in 3X-UI) is configured and running on port ${XRAY_PORT}.\n"
+    fi
 
     local default_key="FlashKey2026"
     read -p "Tunnel security key [default: ${default_key}]: " INPUT_KEY
@@ -273,6 +290,12 @@ EOF
 add_client_tunnel() {
     show_banner
     echo -e "${GREEN}${BOLD}=== Add New Client Tunnel (Relay / Local) ===${NC}\n"
+
+    echo -e "${CYAN}Port Configuration Guide:${NC}"
+    echo -e "  - ${BOLD}Remote Server IP & Port${NC}: The IP and Tunnel Port of your foreign server configured in Step 1."
+    echo -e "  - ${BOLD}Local Incoming Port${NC}    : The port on THIS Iran server that VPN clients connect to (e.g. 443)."
+    echo -e "  - ${BOLD}Additional Ports${NC}       : Extra fallback ports redirected to main port (e.g. 8443, 2087, 8080)."
+    echo -e "----------------------------------------------------------------\n"
 
     read -p "Tunnel identifier name [default: relay1]: " T_NAME
     T_NAME=${T_NAME:-relay1}
@@ -532,6 +555,8 @@ check_status_and_ping() {
                 echo -e "${GREEN}REACHABLE (${lat})${NC}"
             else
                 echo -e "${YELLOW}LOCAL PORT NOT RESPONDING${NC}"
+                echo -e "      ${RED}[!] Notice: No VPN service (e.g. Xray) is answering on port ${XRAY_PORT}.${NC}"
+                echo -e "      ${YELLOW}Ensure your inbound in 3X-UI / Xray is active and configured on port ${XRAY_PORT}.${NC}"
             fi
         fi
         echo -e "----------------------------------------------------------------"
