@@ -29,13 +29,24 @@ fi
 
 ARCH=$(uname -m)
 if [ "$ARCH" != "x86_64" ]; then
-    echo -e "${RED}[!] در حال حاضر معماری x86_64 پشتیبانی می‌شود. معماری سیستم شما: ${ARCH}${NC}"
+    echo -e "${RED}[!] در حال حاضر فقط معماری x86_64 پشتیبانی می‌شود. معماری شما: ${ARCH}${NC}"
     exit 1
 fi
 
-echo -e "${YELLOW}[*] در حال بررسی و نصب پیش‌نیازها...${NC}"
-apt-get update -y >/dev/null 2>&1 || true
-apt-get install -y git curl iptables systemd procps ca-certificates >/dev/null 2>&1 || true
+echo -e "${YELLOW}[*] در حال بررسی پیش‌نیازها...${NC}"
+MISSING_PKGS=""
+for pkg in curl git iptables; do
+    if ! command -v "$pkg" >/dev/null 2>&1; then
+        MISSING_PKGS="$MISSING_PKGS $pkg"
+    fi
+done
+
+if [ -n "$MISSING_PKGS" ]; then
+    echo -e "${YELLOW}[*] در حال نصب بسته‌های مورد نیاز:$MISSING_PKGS ...${NC}"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y --no-install-recommends $MISSING_PKGS >/dev/null 2>&1 || true
+fi
 
 REPO_URL="https://github.com/Lagtor-code/flashtunnel.git"
 INSTALL_DIR="/opt/flashtunnel"
@@ -45,10 +56,10 @@ WRAPPER="/usr/local/bin/flashtunnel"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 
-echo -e "${YELLOW}[*] در حال دریافت آخرین نسخه FlashTunnel از گیت‌هاب...${NC}"
+echo -e "${YELLOW}[*] در حال دریافت آخرین نسخه FlashTunnel...${NC}"
 
 if [ -f "${SCRIPT_DIR}/bin/flashtunnel" ] && [ -f "${SCRIPT_DIR}/flashtunnel.sh" ]; then
-    echo -e "${GREEN}[*] فایل‌های پروژه در مسیر محلی یافت شدند: ${SCRIPT_DIR}${NC}"
+    echo -e "${GREEN}[*] استفاده از فایل‌های محلی مخزن...${NC}"
     mkdir -p "$INSTALL_DIR"
     cp -r "${SCRIPT_DIR}"/* "$INSTALL_DIR/" 2>/dev/null || true
 else
@@ -66,7 +77,7 @@ if [ -f "${INSTALL_DIR}/bin/flashtunnel" ]; then
 elif [ -f "${INSTALL_DIR}/flashtunnel" ]; then
     cp "${INSTALL_DIR}/flashtunnel" "$BIN_DEST"
 else
-    echo -e "${RED}[!] فایل باینری flashtunnel در مخزن یافت نشد.${NC}"
+    echo -e "${RED}[!] باینری flashtunnel در مخزن یافت نشد.${NC}"
     exit 1
 fi
 chmod +x "$BIN_DEST"
@@ -75,7 +86,7 @@ chmod +x "$BIN_DEST"
 if [ -f "${INSTALL_DIR}/flashtunnel.sh" ]; then
     cp "${INSTALL_DIR}/flashtunnel.sh" "$MENU_DEST"
 else
-    echo -e "${RED}[!] فایل flashtunnel.sh در مخزن یافت نشد.${NC}"
+    echo -e "${RED}[!] اسکریپت flashtunnel.sh در مخزن یافت نشد.${NC}"
     exit 1
 fi
 chmod +x "$MENU_DEST"
@@ -86,8 +97,10 @@ cat > "$WRAPPER" << 'EOF'
 if [ $# -eq 0 ]; then
     if [ -t 0 ]; then
         exec /usr/local/bin/flashtunnel-menu
-    else
+    elif [ -c /dev/tty ]; then
         exec /usr/local/bin/flashtunnel-menu </dev/tty
+    else
+        exec /usr/local/bin/flashtunnel-menu
     fi
 else
     exec /usr/local/bin/flashtunnel-bin "$@"
@@ -95,11 +108,10 @@ fi
 EOF
 chmod +x "$WRAPPER"
 
-echo -e "\n${GREEN}${BOLD}[✓] نصب و راه‌اندازی با موفقیت انجام شد!${NC}"
-echo -e "${CYAN}از این پس با تایپ دستور ${BOLD}flashtunnel${NC}${CYAN} در ترمینال، منوی مدیریت تانل باز خواهد شد.${NC}\n"
-sleep 1
+echo -e "\n${GREEN}${BOLD}[✓] FlashTunnel با موفقیت نصب شد!${NC}"
+echo -e "${CYAN}از این پس با تایپ دستور ${BOLD}flashtunnel${NC}${CYAN} در هر زمان، منوی مدیریت تانل باز خواهد شد.${NC}\n"
 
-# Launch Menu immediately (connect to tty if piped from curl)
+# Launch Menu if interactive
 if [ -t 0 ]; then
     exec /usr/local/bin/flashtunnel-menu
 elif [ -c /dev/tty ]; then
